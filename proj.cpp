@@ -66,13 +66,13 @@ int main(int argc, char **argv) {
       double min_dist = 100;
       for (int i = 0; i < object_descriptors.rows; i++) { 
          double dist = matches[i].distance;
-	     if (dist < min_dist) min_dist = dist;
-	     if (dist > max_dist) max_dist = dist;
+	    if (dist < min_dist) min_dist = dist;
+	    if (dist > max_dist) max_dist = dist;
       }
       vector<DMatch> good_matches;
       for (int i = 0; i < object_descriptors.rows; i++)
          if (matches[i].distance < 3 * min_dist)
-	        good_matches.push_back(matches[i]);
+	    good_matches.push_back(matches[i]);
       Mat img_matches;
 
       drawMatches(target_object, object_keypoints, frame, frame_keypoints,
@@ -84,7 +84,7 @@ int main(int argc, char **argv) {
       // Only take keypoints from the "good" matches
       for (int i = 0; i < good_matches.size(); i++) {
          object_points.push_back(object_keypoints[good_matches[i].queryIdx].pt);
-         frame_points.push_back(frame_keypoints[good_matches[i].trainIdx].pt);
+     frame_points.push_back(frame_keypoints[good_matches[i].trainIdx].pt);
       }
       // Compute homography matrix, which gives the mapping of the query
       // (planar) object to the frame (i.e. coordinate system mapping)
