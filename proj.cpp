@@ -12,14 +12,14 @@ double getTime();
 int main(int argc, char **argv) {
    if (argc != 3) {
       cout << "Incorrect number of arguments." << endl;
-      cout << "usage: ./" << argv[0] << " target_object.type video.type" << endl;
+      cout << "usage: ./" << argv[0] << " video.type target_object.type" << endl;
       return -1;
    } 
 
    // Read in target object and video file
-   Mat target_object = imread(argv[1], CV_LOAD_IMAGE_COLOR);
+   Mat target_object = imread(argv[2], CV_LOAD_IMAGE_COLOR);
 
-   const string video_file = argv[2];
+   const string video_file = argv[1];
    VideoCapture capture(video_file);
    if (!capture.isOpened()) {
       cout << "Unable to open video file." << endl;
@@ -29,7 +29,7 @@ int main(int argc, char **argv) {
    double start;
 
    // Setup SURF detector and precompute ketpoints for object
-    int minHessian = 1000;
+    int minHessian = 1000; // Larger = faster, worse matching. Smaller = slower, better matching
     SurfFeatureDetector detector(minHessian);
     vector<KeyPoint> object_keypoints, frame_keypoints;
     detector.detect(target_object, object_keypoints);
@@ -59,24 +59,15 @@ int main(int argc, char **argv) {
       // Match descriptors (using FLANN matcher)
       matches.clear(); //Delete previous matches
       matcher.knnMatch(object_descriptors, frame_descriptors, matches, 2);
-      // Draw only the "good" matches (distance less than 3 * min_dist)
-      // TODO: consider improvements (this is bit suspect/rough)
-      double max_dist = 0;
-      double min_dist = 100;
-      /*for (int i = 0; i < object_descriptors.rows; i++) { 
-         double dist = matches[i].distance;
-         if (dist < min_dist) min_dist = dist;
-         if (dist > max_dist) max_dist = dist;
-      }
-      vector<DMatch> good_matches;
-      for (int i = 0; i < object_descriptors.rows; i++)
-         if (matches[i].distance < 3 * min_dist)
-	        good_matches.push_back(matches[i]);*/
+
+      // Draw only the "good" matches
       vector<DMatch> good_matches;
       for(int k = 0; k < matches.size(); k++) {
+         // matches[k].size() == 2 is rather strict. 0.7 is a good compromise between bad matches and no matches
           if(matches[k].size() == 2 && matches[k][0].distance < 0.7*(matches[k][1].distance))
               good_matches.push_back(matches[k][0]);
       }
+      
       Mat img_matches;
 
       drawMatches(target_object, object_keypoints, frame, frame_keypoints,
