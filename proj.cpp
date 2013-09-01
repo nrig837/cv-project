@@ -8,6 +8,8 @@ using namespace std;
 
 typedef unsigned int uint;
 
+const Scalar colour[] = {Scalar(0, 255, 0), Scalar(255, 0, 0), Scalar(0, 0, 255)};
+
 // Get system time in ms
 double getTime();
 
@@ -129,14 +131,15 @@ int main(int argc, char **argv) {
             perspectiveTransform(object_corners, frame_corners, H);
 
             // Draw the actual lines around the detected object
-            line(img_matches, frame_corners[0] + Point2f(target_object.cols, 0), 
-                  frame_corners[1] + Point2f(target_object.cols, 0), Scalar(0, 255, 0), 3);
-            line(img_matches, frame_corners[1] + Point2f(target_object.cols, 0), 
-                  frame_corners[2] + Point2f(target_object.cols, 0), Scalar(0, 255, 0), 3);
-            line(img_matches, frame_corners[2] + Point2f(target_object.cols, 0), 
-                  frame_corners[3] + Point2f(target_object.cols, 0), Scalar(0, 255, 0), 3);
-            line(img_matches, frame_corners[3] + Point2f(target_object.cols, 0), 
-                  frame_corners[0] + Point2f(target_object.cols, 0), Scalar(0, 255, 0), 3);
+            float xOffset = static_cast<float>(target_list[0].cols);
+            line(img_matches, frame_corners[0] + Point2f(xOffset, 0), 
+                  frame_corners[1] + Point2f(xOffset, 0), colour[obj % 3], 3);
+            line(img_matches, frame_corners[1] + Point2f(xOffset, 0), 
+                  frame_corners[2] + Point2f(xOffset, 0), colour[obj % 3], 3);
+            line(img_matches, frame_corners[2] + Point2f(xOffset, 0), 
+                  frame_corners[3] + Point2f(xOffset, 0), colour[obj % 3], 3);
+            line(img_matches, frame_corners[3] + Point2f(xOffset, 0), 
+                  frame_corners[0] + Point2f(xOffset, 0), colour[obj % 3], 3);
          }
       }
       // Add frame timer to image
