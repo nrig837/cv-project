@@ -35,7 +35,7 @@ int main(int argc, char **argv) {
    }
 
    // Setup SURF detector and precompute ketpoints for objects
-   int minHessian = 1000; // Larger = faster, worse matching. Smaller = slower, better matching
+   int minHessian = 400;//1000; // Larger = faster, worse matching. Smaller = slower, better matching
    SurfFeatureDetector detector(minHessian);
    vector<KeyPoint> frame_keypoints;
    vector< vector<KeyPoint> > object_keypoints_list;
@@ -76,12 +76,30 @@ int main(int argc, char **argv) {
       extractor.compute(frame, frame_keypoints, frame_descriptors);
       
       // Match descriptors (using FLANN matcher)
+      // Ensure enough descriptors for matching 
+      // (rough, could be refactored)
+      if (frame_descriptors.rows <= 1) {
+	 cout << "frame descriptor list too small nigga!!!" << endl;
+         continue;     
+      }
+      bool enough_descriptors = true;
+      for (uint i = 0; i < NUM_TARGETS; i++)
+         if (object_descriptors_list[i].rows <= 1)
+            enough_descriptors = false;
+      if (!enough_descriptors)
+         continue;
+      
+      // TEMP: output for debugging only
+      cout << object_descriptors_list[0].size() << endl;
+      cout << frame_descriptors.size() << endl;
       matches.clear(); //Delete previous matches
-      for(uint i = 0; i < NUM_TARGETS; ++i) {
+      for (uint i = 0; i < NUM_TARGETS; ++i) {
          vector< vector<DMatch> > m;
+	 //vector<DMatch> match_vec;
          matcher.knnMatch(object_descriptors_list[i], frame_descriptors, m, 2);
          matches.push_back(m);
       }
+      cout << "Made it through matching nigga" << endl;
 
       // Draw only the "good" matches
       vector< vector<DMatch> > good_match_list;
