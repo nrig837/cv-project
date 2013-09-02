@@ -60,9 +60,11 @@ int main(int argc, char **argv) {
    double start;
    namedWindow("Object Matching", 1);
    Mat frame;
-
+   double temp_start = getTime();
+   int num_frames = 0;
    // Hunt for object in each video frame
    while (capture.read(frame)) {
+      num_frames++;
       start = getTime();
       //cvtColor(frame, frame, CV_BGR2GRAY);
 
@@ -146,23 +148,27 @@ int main(int argc, char **argv) {
       putText(img_matches, format("%0.0fms",getTime()-start),Point(frame.cols-60,20), FONT_HERSHEY_PLAIN, 1.0, CV_RGB(0,255,0), 1);
 
       imshow("Object Matching", img_matches);
-      if(waitKey(30) >= 0) break;
+      if(waitKey(1) >= 0) break;
    }
+
+   // TEMP: for testing, remove later
+   double temp_end = getTime() - temp_start;
+   cout << "Entire video took: " << temp_end << " ms " << endl;
+   cout << "There were: " << num_frames << " frames" << endl;
+   cout << "Average fps: " << (double) num_frames / (temp_end / 1000.0) << endl;
+   
    return 0;
 }
 
 // MAC/LINUX
-#if defined TARGET_OS_MAC || defined __linux__
+//#if defined TARGET_OS_MAC || defined __linux__
 //#include <sys/time.h>
 double getTime() {
-/* //UNTESTED
-    timeval t;
-    gettimeofday(&t, NULL);
-    return t.tv_usec / 1000.0;*/
-    return 0.0;
+    double t = (double) getTickCount();
+    return (1000.0 * t) / getTickFrequency(); 
 }
 
-// WINDOWS
+/*// WINDOWS
 #elif defined _WIN32 || defined _WIN64
 #include <windows.h>
 double getTime() {
@@ -174,4 +180,4 @@ double getTime() {
 double getTime() {
     return 0.0;
 }
-#endif
+#endif*/
