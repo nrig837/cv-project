@@ -13,12 +13,30 @@ const Scalar colour[] = {Scalar(0, 255, 0), Scalar(255, 0, 0), Scalar(0, 0, 255)
 
 // Get system time in ms
 double getTime();
+// Check whether string is all numeric 
+bool isNumeric(char* str);
 
 int main(int argc, char **argv) {
    if (argc < 3) {
       cout << "Incorrect number of arguments." << endl;
-      cout << "usage: ./" << argv[0] << " video.type target_object1.type [target_object2.type ...]" << endl;
+      cout << "usage: ./" << argv[0] << 
+	      " video.type target_object1.type [target_object2.type ...] [hessianThreshold] [fps]" << endl;
       return -1;
+   }
+
+   // Read in parameters for SURF and playback (if specified)
+   // Note: this is a dodgy way of doing it 
+   int hessianThresh = 500;//200;//1000; // Larger = faster, worse matching. Smaller = slower, better matching
+   // Setup some playback parameters (related to detector parameters)
+   double average_fps = 0.0;
+   double DESIRED_FPS = 15.0;
+   if (isNumeric(argv[argc-1]) && isNumeric(argv[argc-2])) {
+      // Assume if last two arguments end in digits, they are not image files
+      hessianThresh = (double) atoi(argv[argc-2]);
+      DESIRED_FPS = (double) atoi(argv[argc-1]);
+      cout << "hessianThresh: " << hessianThresh << endl;
+      cout << "DESIRED_FPS: " << DESIRED_FPS << endl;
+      argc -= 2;
    } 
 
    // Read in target object and video file
@@ -36,10 +54,6 @@ int main(int argc, char **argv) {
    }
 
    // Setup SURF detector and precompute ketpoints for objects
-   int hessianThresh = 500;//200;//1000; // Larger = faster, worse matching. Smaller = slower, better matching
-   // Setup some playback parameters (related to detector parameters)
-   double average_fps = 0.0;
-   double DESIRED_FPS = 15.0;
    int tooSlow = -1;
    SurfFeatureDetector detector(hessianThresh);
    vector<KeyPoint> frame_keypoints;
@@ -212,7 +226,7 @@ int main(int argc, char **argv) {
          vector<KeyPoint>& object_keypoints = object_keypoints_list[obj];
          Mat& target_object = target_list[obj];
 
-         if (good_matches.size() < 8) {
+         if (good_matches.size() < 4) {
             cout << obj << ": " << good_matches.size() << " good matches, skipping image" << endl;
          } else {
             cout << obj << ": " << good_matches.size() << " good matches" << endl;
@@ -275,6 +289,13 @@ int main(int argc, char **argv) {
 double getTime() {
     double t = (double) getTickCount();
     return (1000.0 * t) / getTickFrequency(); 
+}
+
+bool isNumeric(char* str) {
+   for (int i = 0; str[i] != '\0'; i++)
+      if (!isdigit(str[i]))
+         return false;
+   return true;
 }
 
 /*// WINDOWS
