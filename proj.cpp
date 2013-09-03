@@ -2,6 +2,7 @@
 #include "opencv2/nonfree/features2d.hpp" 
 #include <iostream>
 #include <algorithm>
+#include <math.h>
 #include <vector>
 
 using namespace cv;
@@ -15,28 +16,33 @@ const Scalar colour[] = {Scalar(0, 255, 0), Scalar(255, 0, 0), Scalar(0, 0, 255)
 double getTime();
 // Check whether string is all numeric 
 bool isNumeric(char* str);
+// Return euclidean distance between two points
+int dist(Point2f p1, Point2f p2);
 
 int main(int argc, char **argv) {
    if (argc < 3) {
       cout << "Incorrect number of arguments." << endl;
       cout << "usage: ./" << argv[0] << 
-	      " video.type target_object1.type [target_object2.type ...] [hessianThreshold] [fps]" << endl;
+	      " video.type target_object1.type [target_object2.type ...] [noise] [hessianThreshold] [fps]" << endl;
       return -1;
    }
 
    // Read in parameters for SURF and playback (if specified)
-   // Note: this is a dodgy way of doing it 
+   // Note: this is totally dodgy but its like 2.00 am 
    int hessianThresh = 500;//200;//1000; // Larger = faster, worse matching. Smaller = slower, better matching
    // Setup some playback parameters (related to detector parameters)
    double average_fps = 0.0;
    double DESIRED_FPS = 15.0;
+   bool noiseSuppress = false;
    if (isNumeric(argv[argc-1]) && isNumeric(argv[argc-2])) {
       // Assume if last two arguments end in digits, they are not image files
       hessianThresh = (double) atoi(argv[argc-2]);
       DESIRED_FPS = (double) atoi(argv[argc-1]);
+      // Also assume that if these are specified, noise suppression option is too
+      noiseSuppress = (argv[argc-3][0] == 'y') ? true : false;
       cout << "hessianThresh: " << hessianThresh << endl;
       cout << "DESIRED_FPS: " << DESIRED_FPS << endl;
-      argc -= 2;
+      argc -= 3;
    } 
 
    // Read in target object and video file
@@ -52,7 +58,11 @@ int main(int argc, char **argv) {
       cout << "Unable to open video file." << endl;
       return -1;
    }
-
+   vector<Point2f> dummy;
+   vector< vector<Point2f> > prev_frame_corners(NUM_TARGETS, dummy);
+   vector<int> stable_area;
+   for (int i = 0; i < NUM_TARGETS; i++)
+      stable_area.push_back(target_list[i].rows * target_list[i].cols);
    // Setup SURF detector and precompute ketpoints for objects
    int tooSlow = -1;
    SurfFeatureDetector detector(hessianThresh);
@@ -250,16 +260,86 @@ int main(int argc, char **argv) {
             vector<Point2f> frame_corners(4);
             perspectiveTransform(object_corners, frame_corners, H);
 
-            // Draw the actual lines around the detected object
-            float xOffset = static_cast<float>(target_list[0].cols);
-            line(img_matches, frame_corners[0] + Point2f(xOffset, 0), 
-                  frame_corners[1] + Point2f(xOffset, 0), colour[obj % 3], 3);
-            line(img_matches, frame_corners[1] + Point2f(xOffset, 0), 
-                  frame_corners[2] + Point2f(xOffset, 0), colour[obj % 3], 3);
-            line(img_matches, frame_corners[2] + Point2f(xOffset, 0), 
-                  frame_corners[3] + Point2f(xOffset, 0), colour[obj % 3], 3);
-            line(img_matches, frame_corners[3] + Point2f(xOffset, 0), 
-                  frame_corners[0] + Point2f(xOffset, 0), colour[obj % 3], 3);
+	    // Counter-act frame noise by considering past frame(s) 
+	    // Ignore sudden lurchy mis-detection due to noise
+	    if (prev_frame_corners[obj].empty()) {
+	       for (int i = 0; i < frame_corners.size(); i++)
+                  prev_frame_corners[obj].push_back(frame_corners[i]);
+	    }
+	    const int NOISE_THRESH = 50;
+	    bool ignore_frame = false;
+	    for (int c = 0; c < 4; c++) {
+               if (abs(prev_frame_corners[obj][c].x - frame_corners[c].x) > NOISE_THRESH ||
+	           abs(prev_frame_corners[obj][c].y - frame_corners[c].y) > NOISE_THRESH) {
+		  if (num_frames % 10)
+		     ignore_frame = true;
+	       }
+	    }
+	    // Consider area of match relative to most recent, stable area of object
+	    // Assume trapezoidal for now (should use general form for area of a quadrilateral)
+	    float a = (float) dist(frame_corners[0], frame_corners[1]);
+	    float b = (float) dist(frame_corners[1], frame_corners[2]);
+	    float c = (float) dist(frame_corners[2], frame_corners[3]);
+	    float d = (float) dist(frame_corners[3], frame_corners[0]);
+	    //int A = asin(
+            //double sinA = sin(A);
+	    int h = abs(frame_corners[0].y - frame_corners[3].y);
+	    int match_area = (a+b)/2 * h;
+	    // Below code unsafe division
+            //float a_b = (float) a / (float) b;
+	    //float b_c = (float) b / (float) c;
+            //float prev_a = (float) dist(prev_frame_corners[obj][0], prev_frame_corners[obj][1]);
+	    //float prev_b = (float) dist(prev_frame_corners[obj][1], prev_frame_corners[obj][2]);
+            //float prev_c = (float) dist(prev_frame_corners[obj][2], prev_frame_corners[obj][3]);
+	    //float prev_d = (float) dist(prev_frame_corners[obj][3], prev_frame_corners[obj][0]);
+	    //h = abs(prev_frame_corners[obj][0].y - frame_corners[3].y);
+	    //int prev_match_area = (prev_a + prev_b)/2 * h;
+	    // TEMP: try ratio of side lengths 
+	   // float prev_a_b = (float) prev_a / (float) prev_b;
+	    //float prev_b_c = (float) prev_b / (float) prev_c;
+	    //float prev_c_d = (float) prev_c / (float) prev_d; 
+            // If new match actually looks "better", update
+	    // (we don't want to get stuck comparing against a dodgy match)
+	    /*if (prev_match_area >= 5 &&
+	        //((float) match_area / (float) stable_area[obj] < 0.5 || 
+		// (float) match_area / (float) stable_area[obj] > 1.5)) {
+		//ignore_frame = true; 
+	        abs(stable_area[obj] - match_area) < 
+	        abs(stable_area[obj] - prev_match_area)) {
+                //ignore_frame = false;
+	    
+	       const float SHAPE_THRESH = 0.5;
+	       if ((prev_a != 0 && prev_c != 0 && prev_d != 0) &&
+	           (a / prev_a < 1.0 - SHAPE_THRESH || a / prev_a > 1.0 + SHAPE_THRESH ||
+	   	   c / prev_c < 1.0 - SHAPE_THRESH || c / prev_c > 1.0 + SHAPE_THRESH || 	   
+	           d / prev_d < 1.0 - SHAPE_THRESH || d / prev_d > 1.0 + SHAPE_THRESH)) {
+                  //ignore_frame = true;
+	       }
+	    }*/
+            //const float AREA_THRESH = 0.2;
+	    //if (stable_area[obj] != 0 && 
+	    //    ((float) match_area / (float) stable_area[obj] > 1.0 - AREA_THRESH || 
+		//(float) match_area / (float) stable_area[obj] < 1.0 + AREA_THRESH)) {
+               if (noiseSuppress) {
+   	          if (!ignore_frame) {
+                     prev_frame_corners[obj] = frame_corners;
+   	             //stable_area[obj] = match_area;
+   	          } else {
+   	             frame_corners = prev_frame_corners[obj];
+   	          }
+	       }
+               
+               // Draw the actual lines around the detected object
+               float xOffset = static_cast<float>(target_list[0].cols);
+               line(img_matches, frame_corners[0] + Point2f(xOffset, 0), 
+                     frame_corners[1] + Point2f(xOffset, 0), colour[obj % 3], 3);
+               line(img_matches, frame_corners[1] + Point2f(xOffset, 0), 
+                     frame_corners[2] + Point2f(xOffset, 0), colour[obj % 3], 3);
+               line(img_matches, frame_corners[2] + Point2f(xOffset, 0), 
+                     frame_corners[3] + Point2f(xOffset, 0), colour[obj % 3], 3);
+               line(img_matches, frame_corners[3] + Point2f(xOffset, 0), 
+                     frame_corners[0] + Point2f(xOffset, 0), colour[obj % 3], 3);
+	    //}
          }
       }
       // Add frame timer to image
@@ -296,6 +376,12 @@ bool isNumeric(char* str) {
       if (!isdigit(str[i]))
          return false;
    return true;
+}
+
+int dist(Point2f p1, Point2f p2) {
+   int x_dist = abs(p1.x - p2.x);
+   int y_dist = abs(p2.y - p2.y);
+   return (int) sqrt(std::pow((double) x_dist, 2) + std::pow((double) y_dist, 2));
 }
 
 /*// WINDOWS
