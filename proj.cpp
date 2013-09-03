@@ -1,6 +1,9 @@
 #include "opencv2/opencv.hpp"
 #include "opencv2/nonfree/features2d.hpp" 
 #include <iostream>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <dirent.h>
 #include <algorithm>
 #include <math.h>
 #include <vector>
@@ -11,6 +14,10 @@ using namespace std;
 typedef unsigned int uint;
 
 const Scalar colour[] = {Scalar(0, 255, 0), Scalar(255, 0, 0), Scalar(0, 0, 255)};
+
+// Read frames from video into matrix vector (for unified interface
+// if we want to be able to slurp up an image sequence as well as a video file)
+void readFrames(VideoCapture& vc, vector<Mat>& frames_list);
 
 // Get system time in ms
 double getTime();
@@ -51,12 +58,45 @@ int main(int argc, char **argv) {
       target_list.push_back(imread(argv[i], CV_LOAD_IMAGE_COLOR));
    const uint NUM_TARGETS = target_list.size();
    cout << "Read " << NUM_TARGETS << " images" << endl;
-
-   const string video_file = argv[1];
-   VideoCapture capture(video_file);
-   if (!capture.isOpened()) {
-      cout << "Unable to open video file." << endl;
-      return -1;
+   // If directory, assume it contains sequence of image frames
+   struct stat buf;
+   stat(argv[1], &buf);
+   vector<Mat> frames_list;
+   VideoCapture capture;
+   if (S_ISDIR(buf.st_mode)) {
+      cout << "FOUND A DIRECTORY" << endl;
+      DIR* dir;
+      struct dirent* ent;
+      if ((dir = opendir(argv[1])) != NULL) {
+         // Read all files as video frames
+	 while ((ent = readdir(dir)) != NULL) {
+	    Mat frame;
+	    if (ent->d_name[0] == '.')
+	       continue;
+	    string img_file = string(argv[1])+"/"+string(ent->d_name);
+	    cout << "img_file: " << img_file << endl;
+            frame = imread(img_file, CV_LOAD_IMAGE_COLOR);
+	    if (!frame.data) {
+               cout << "Problem reading image frame." << endl;
+	       return -1;
+	    }
+	    frames_list.push_back(frame);
+	 }
+      } else {
+	 cout << "Unable to open directory" << endl;
+	 return -1;
+      }	 
+   } else {
+      // If video file, then read that
+      const string video_file = argv[1];
+      capture.open(video_file);
+      if (!capture.isOpened()) {
+         cout << "Unable to open video file." << endl;
+         return -1;
+      }
+      cout << "TRYING TO READ FRAMES.." << endl;
+      readFrames(capture, frames_list);
+      cout << "READ FRAMES" << endl;
    }
    vector<Point2f> dummy;
    vector< vector<Point2f> > prev_frame_corners(NUM_TARGETS, dummy);
@@ -94,7 +134,8 @@ int main(int argc, char **argv) {
    Mat img_out, img_matches;
    int x = 0, y = 0;
    // Hunt for object in each video frame
-   while (capture.read(frame)) {
+   for (int f = 0; f < frames_list.size(); f++) {//while(capture.read(frame)) {
+      frame = frames_list[f];
       num_frames++;
       start = getTime();
       //cvtColor(frame, frame, CV_BGR2GRAY);
@@ -126,7 +167,8 @@ int main(int argc, char **argv) {
             target_list[i].copyTo(displayRegion);
          }
 	 // Messy
-	 x += target_list[NUM_TARGETS-1].cols; //widthPad - target_list[0].cols;
+	 if (NUM_TARGETS > 1)
+	    x += target_list[NUM_TARGETS-1].cols; //widthPad - target_list[0].cols;
 	 cout << "rest will start from x: " << x << endl;
       }
       // Detect keypoints using SURF descriptor
@@ -361,6 +403,14 @@ int main(int argc, char **argv) {
    cout << "Average fps: " << (double) num_frames / (temp_end / 1000.0) << endl;
    
    return 0;
+}
+
+// Read video frames in
+void readFrames(VideoCapture& vc, vector<Mat>& frames_list) {
+   Mat frame;
+   while(vc.read(frame)) {
+      frames_list.push_back(frame.clone());
+   }   
 }
 
 // MAC/LINUX
