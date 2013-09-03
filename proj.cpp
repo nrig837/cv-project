@@ -47,8 +47,8 @@ int main(int argc, char **argv) {
       DESIRED_FPS = (double) atoi(argv[argc-1]);
       // Also assume that if these are specified, noise suppression option is too
       noiseSuppress = (argv[argc-3][0] == 'y') ? true : false;
-      cout << "hessianThresh: " << hessianThresh << endl;
-      cout << "DESIRED_FPS: " << DESIRED_FPS << endl;
+      //cout << "hessianThresh: " << hessianThresh << endl;
+      //cout << "DESIRED_FPS: " << DESIRED_FPS << endl;
       argc -= 3;
    } 
 
@@ -64,7 +64,7 @@ int main(int argc, char **argv) {
    vector<Mat> frames_list;
    VideoCapture capture;
    if (S_ISDIR(buf.st_mode)) {
-      cout << "FOUND A DIRECTORY" << endl;
+      cout << "Found a directory." << endl;
       DIR* dir;
       struct dirent* ent;
       if ((dir = opendir(argv[1])) != NULL) {
@@ -94,9 +94,9 @@ int main(int argc, char **argv) {
          cout << "Unable to open video file." << endl;
          return -1;
       }
-      cout << "TRYING TO READ FRAMES.." << endl;
+      cout << "Trying to read video frames..." << endl;
       readFrames(capture, frames_list);
-      cout << "READ FRAMES" << endl;
+      cout << "Read frames." << endl;
    }
    vector<Point2f> dummy;
    vector< vector<Point2f> > prev_frame_corners(NUM_TARGETS, dummy);
@@ -148,7 +148,7 @@ int main(int argc, char **argv) {
          for (int i = 0; i < NUM_TARGETS; i++) {
 	    maxWidth = max(maxWidth, target_list[i].cols);
 	    maxHeight = max(maxHeight, target_list[i].rows);
-	    cout << "maxWidth: " << maxWidth << endl;
+	    //cout << "maxWidth: " << maxWidth << endl;
          } 
 	 // Add a little extra for safety
 	 widthPad += maxWidth * NUM_TARGETS;
@@ -160,7 +160,7 @@ int main(int argc, char **argv) {
                x += maxWidth;
 	       y = 0;
 	    }
-	    cout << "Placing " << i << "th image at x: " << x << endl;
+	    //cout << "Placing " << i << "th image at x: " << x << endl;
    	    Mat displayRegion(img_out, Rect(x, y, target_list[i].cols, 
    				            target_list[i].rows));
 	    y += target_list[i].rows;
@@ -169,7 +169,7 @@ int main(int argc, char **argv) {
 	 // Messy
 	 if (NUM_TARGETS > 1)
 	    x += target_list[NUM_TARGETS-1].cols; //widthPad - target_list[0].cols;
-	 cout << "rest will start from x: " << x << endl;
+	 //cout << "rest will start from x: " << x << endl;
       }
       // Detect keypoints using SURF descriptor
       // (adapt hessian threshold based on running average of frame rate)
@@ -178,12 +178,12 @@ int main(int argc, char **argv) {
       bool stable = (num_frames > 15);
       if (stable && tooSlow == -1) {
          tooSlow = (average_fps < DESIRED_FPS);
-	 cout << "tooSlow set to: " << tooSlow << endl;
+	 //cout << "tooSlow set to: " << tooSlow << endl;
       }
 
       bool recompute = false;
       int minHessian = 50, maxHessian = 1000;
-      cout << "tooSlow: " << tooSlow << " average_fps: " << average_fps << endl;
+      //cout << "tooSlow: " << tooSlow << " average_fps: " << average_fps << endl;
       if (stable && tooSlow == 1 && !(num_frames % 10) && 
           average_fps < DESIRED_FPS && 
 	  minHessian < hessianThresh &&
@@ -232,7 +232,7 @@ int main(int argc, char **argv) {
       // Ensure enough descriptors for matching 
       // (rough, could be refactored)
       if (frame_descriptors.rows <= 1) {
-	 cout << "frame descriptor list too small nigga!!!" << endl;
+	 //cout << "frame descriptor list too small nigga!!!" << endl;
          continue;     
       }
       bool enough_descriptors = true;
@@ -243,8 +243,8 @@ int main(int argc, char **argv) {
          continue;
       
       // TEMP: output for debugging only
-      cout << object_descriptors_list[0].size() << endl;
-      cout << frame_descriptors.size() << endl;
+      //cout << object_descriptors_list[0].size() << endl;
+      //cout << frame_descriptors.size() << endl;
       matches.clear(); //Delete previous matches
       for (uint i = 0; i < NUM_TARGETS; ++i) {
          vector< vector<DMatch> > m;
@@ -252,7 +252,7 @@ int main(int argc, char **argv) {
          matcher.knnMatch(object_descriptors_list[i], frame_descriptors, m, 2);
          matches.push_back(m);
       }
-      cout << "Made it through matching nigga" << endl;
+      //cout << "Made it through matching nigga" << endl;
 
       // Draw only the "good" matches
       vector< vector<DMatch> > good_match_list;
@@ -279,9 +279,9 @@ int main(int argc, char **argv) {
          Mat& target_object = target_list[obj];
 
          if (good_matches.size() < 4) {
-            cout << obj << ": " << good_matches.size() << " good matches, skipping image" << endl;
+            //cout << obj << ": " << good_matches.size() << " good matches, skipping image" << endl;
          } else {
-            cout << obj << ": " << good_matches.size() << " good matches" << endl;
+            //cout << obj << ": " << good_matches.size() << " good matches" << endl;
 
             // Actually find object in frame (work out pose + location)
             vector<Point2f> object_points, frame_points;
@@ -386,8 +386,8 @@ int main(int argc, char **argv) {
       }
       // Add frame timer to image
       putText(img_matches, format("%0.0fms",getTime()-start),Point(frame.cols-60,20), FONT_HERSHEY_PLAIN, 1.0, CV_RGB(0,255,0), 1);
-      cout << "x: " << x << " img_matches.cols: " << img_matches.cols << endl;
-      cout << "img_out cols: " << img_out.cols << endl;
+      //cout << "x: " << x << " img_matches.cols: " << img_matches.cols << endl;
+      //cout << "img_out cols: " << img_out.cols << endl;
       Mat displayRest(img_out, Rect(x, 0, img_matches.cols, 
 			            img_matches.rows));
       img_matches.copyTo(displayRest);
