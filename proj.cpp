@@ -50,7 +50,11 @@ int main(int argc, char **argv) {
       //cout << "hessianThresh: " << hessianThresh << endl;
       //cout << "DESIRED_FPS: " << DESIRED_FPS << endl;
       argc -= 3;
-   } 
+   }
+
+   // TEMP: hardcode overlay object (not properly blended at this point)
+   Mat overlay = imread("overlay.png", CV_LOAD_IMAGE_COLOR);
+   Mat overlay_warped(overlay.rows * 2; overlay.cols * 2, overlay.type());
 
    // Read in target object and video file
    vector<Mat> target_list;
@@ -302,6 +306,9 @@ int main(int argc, char **argv) {
             vector<Point2f> frame_corners(4);
             perspectiveTransform(object_corners, frame_corners, H);
 
+            // TEMP: warp overlay image
+            warpPerspective(overlay, overlay_warped, H);
+
 	    // Counter-act frame noise by considering past frame(s) 
 	    // Ignore sudden lurchy mis-detection due to noise
 	    if (prev_frame_corners[obj].empty()) {
@@ -381,6 +388,23 @@ int main(int argc, char **argv) {
                      frame_corners[3] + Point2f(xOffset, 0), colour[obj % 3], 3);
                line(img_matches, frame_corners[3] + Point2f(xOffset, 0), 
                      frame_corners[0] + Point2f(xOffset, 0), colour[obj % 3], 3);
+
+               // Draw overlay
+               int channels = overlay_warped.channels();
+               int rows = overlay_warped.rows;
+               int cols = overlay_warped.cols;
+               if (overlay_warped.isContinuous()) {
+                  cols *= rows;
+                  rows = 1;
+               }
+               //int i, j;
+               //uchar* p;
+               //for (int i = 0; i < rows; i++) {
+               //   p = overlay_warped<uchar>(i);
+               //   for (int j = 0; j < cols; j++) {
+               //      img_matches.at<uchar>(i, j) = 
+               //   }
+               //}
 	    //}
          }
       }
