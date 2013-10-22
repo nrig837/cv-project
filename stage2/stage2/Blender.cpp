@@ -12,8 +12,8 @@
 #include <iostream>
 #include <sstream>
 #include <sys/stat.h>
-#include <unistd.h>
-#include <dirent.h>
+//#include <unistd.h>
+//#include <dirent.h>
 #include <algorithm>
 #include <math.h>
 #include <vector>
@@ -29,6 +29,10 @@ Blender::Blender() {
 
 void Blender::getBlended(const Mat& overlay, const Mat& target, Mat& blendedImage) {
     // TODO: check input image dimensions are valid (i.e. target >> overlay)
+	if (target.rows < overlay.rows || target.cols < overlay.cols) {
+		cout << "ERROR: Overlay larger than target" << endl;
+		return;
+	}
     // TEMP: initial value range
     // Programmatically specify mask image
     Mat_<float> mask(target.rows, target.cols, 1.0);

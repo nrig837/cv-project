@@ -14,8 +14,8 @@
 #include <iostream>
 #include <sstream>
 #include <sys/stat.h>
-#include <unistd.h>
-#include <dirent.h>
+//#include <unistd.h>
+//#include <dirent.h>
 #include <algorithm>
 #include <math.h>
 #include <vector>

@@ -3,8 +3,8 @@
 #include "Blender.h"
 #include <iostream>
 #include <sys/stat.h>
-#include <unistd.h>
-#include <dirent.h>
+//#include <unistd.h>
+//#include <dirent.h>
 #include <algorithm>
 #include <math.h>
 #include <vector>
@@ -31,7 +31,7 @@ int main(int argc, char **argv) {
     if (argc < 4) {
         cout << "Incorrect number of arguments." << endl;
         cout << "usage: ./" << argv[0] <<
-        " video.type target_object1.type [target_object2.type ...] [noise] [hessianThreshold] [fps]" << endl;
+        " video.type overlay_image target_object1.type [target_object2.type ...] [noise] [hessianThreshold] [fps]" << endl;
         return -1;
     }
     
@@ -91,9 +91,49 @@ int main(int argc, char **argv) {
     for(uint i = 0; i < NUM_TARGETS; ++i)
         extractor.compute(target_list[i], object_keypoints_list[i], object_descriptors_list[i]);
     
-    // Setup FLANN Matcher
-    FlannBasedMatcher matcher;
+    // Setup Brute Force Matcher
+    BFMatcher matcher;
     vector< vector< vector<DMatch> > > matches;
+
+	// Setup Kalman
+	// 4 pts * 2 axis(x,y) = 8 dimentionality for measurement
+	// 8 dims * 2 time steps = 16 total dimentionality for state
+	KalmanFilter KF(16, 8, 0);
+
+	// Transition Marix
+	Mat_<float> transMatrix(16, 16);
+	transMatrix.setTo(Scalar(0));
+	for (int i = 0; i < 16; ++i)
+		transMatrix(i, i) = 1;
+	for (int i = 0; i < 8; ++i)
+		transMatrix(i, i+8) = 1;
+	KF.transitionMatrix = transMatrix;
+	/* Resulting maxtrix looks like
+	1 0 0 0  0 0 0 0  1 0 0 0  0 0 0 0
+	0 1 0 0  0 0 0 0  0 1 0 0  0 0 0 0
+	0 0 1 0  0 0 0 0  0 0 1 0  0 0 0 0
+	...
+	0 0 0 0  0 0 0 1  0 0 0 0  0 0 0 1
+	0 0 0 0  0 0 0 0  1 0 0 0  0 0 0 0
+	...
+	0 0 0 0  0 0 0 0  0 0 0 0  0 1 0 0
+	0 0 0 0  0 0 0 0  0 0 0 0  0 0 1 0
+	0 0 0 0  0 0 0 0  0 0 0 0  0 0 0 1
+	meaning old co-ords are copied 1:1 (top half of matrix), new are added also with weight 1 (btm half matrix)
+	*/
+
+	// Pre-allocate measurement array, gets recycled each frame
+	Mat_<float> measurement(8,1);
+	measurement.setTo(Scalar(0));
+
+	// Initial state is 0
+	KF.statePre.setTo(Scalar(0));
+
+	setIdentity(KF.measurementMatrix);
+	setIdentity(KF.processNoiseCov, Scalar::all(1e-4));
+	setIdentity(KF.measurementNoiseCov, Scalar::all(1e-1));
+	setIdentity(KF.errorCovPost, Scalar::all(.1));
+	// End Kalman Setup
     
     // Misc setup
     double start;
@@ -143,7 +183,7 @@ int main(int argc, char **argv) {
         }
         
         // Detect keypoints using SURF descriptor
-        cout << "Recomputing: " << hessianThresh << endl;
+        //cout << "Recomputing: " << hessianThresh << endl;
         SurfFeatureDetector detector_new(hessianThresh);
         detector = detector_new;
         vector<KeyPoint> frame_keypoints;
@@ -217,11 +257,14 @@ int main(int argc, char **argv) {
             vector<KeyPoint>& object_keypoints = object_keypoints_list[obj];
             Mat& target_object = target_list[obj];
             
-            if (good_matches.size() < 4) {
+            if (good_matches.size() < 8) {
                 //cout << obj << ": " << good_matches.size() << " good matches, skipping image" << endl;
             } else {
                 //cout << obj << ": " << good_matches.size() << " good matches" << endl;
-                
+				
+				//Align drawings with the frame
+                float xOffset = static_cast<float>(target_list[0].cols);
+
                 // Actually find object in frame (work out pose + location)
                 vector<Point2f> object_points, frame_points;
                 // Only take keypoints from the "good" matches
@@ -240,13 +283,28 @@ int main(int argc, char **argv) {
                 object_corners[3] = cvPoint(0, target_object.rows);
                 vector<Point2f> frame_corners(4);
                 perspectiveTransform(object_corners, frame_corners, H);
-                
+
+				// Kalman Smoothing Step
+				// First call predict, to update the internal statePre variable
+				KF.predict();
+				for (int i = 0; i < 4; ++i) {
+					measurement(2*i)    = frame_corners[i].x;
+					measurement(2*i +1) = frame_corners[i].y;
+					// Draw un-corrected point (in pink, yay pink!)
+					circle(img_matches, frame_corners[i] + Point2f(xOffset, 0), 5, Scalar(255, 0, 255), -1);
+				}
+				// Correct measurement using estimation
+				Mat estimated = KF.correct(measurement);
+				for (int i = 0; i < 4; ++i) {
+					frame_corners[i].x = estimated.at<float>(2*i);
+					frame_corners[i].y = estimated.at<float>(2*i +1);
+				}
+
                 // Overlay image (in separate frame display, outside of img_matches)
                 warpPerspective(blendedOverlay, frame, H, frame.size(),
                                 INTER_LINEAR, BORDER_TRANSPARENT);
                 
                 // Draw the actual lines around the detected object
-                float xOffset = static_cast<float>(target_list[0].cols);
                 line(img_matches, frame_corners[0] + Point2f(xOffset, 0),
                      frame_corners[1] + Point2f(xOffset, 0), colour[obj % 3], 3);
                 line(img_matches, frame_corners[1] + Point2f(xOffset, 0),
