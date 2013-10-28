@@ -20,6 +20,16 @@ const Scalar colour[] = {Scalar(0, 255, 0), Scalar(255, 0, 0), Scalar(0, 0, 255)
 // if we want to be able to slurp up an image sequence as well as a video file)
 void readFrames(VideoCapture& vc, vector<Mat>& frames_list);
 
+// Make a bounding Rect from an irregular set of 4 points
+Rect makeBoundingBox(vector<Point2f>&);
+
+// Make a vector of corners
+vector<Point2f> makeCornerVec(Mat& src);
+
+// returns the region defined by corners, warped to be rectangular, transform returns the transform used in the warp
+Mat extractAndWarp(Mat& image, vector<Point2f>& corners, Mat& tansform);
+Mat unWarp(Mat& image, vector<Point2f>& corners, Size& out, Mat& tansform);
+
 // Get system time in ms
 double getTime();
 // Check whether string is all numeric
@@ -130,21 +140,26 @@ int main(int argc, char **argv) {
 	KF.statePre.setTo(Scalar(0));
 
 	setIdentity(KF.measurementMatrix);
-	setIdentity(KF.processNoiseCov, Scalar::all(1e-4));
+	setIdentity(KF.processNoiseCov, Scalar::all(1e-3));
 	setIdentity(KF.measurementNoiseCov, Scalar::all(1e-1));
 	setIdentity(KF.errorCovPost, Scalar::all(.1));
 	// End Kalman Setup
     
     // Misc setup
-    double start;
+    namedWindow("Kalman Graph", CV_WINDOW_AUTOSIZE);
     namedWindow("Object Matching", CV_WINDOW_AUTOSIZE);
     namedWindow("Overlay", CV_WINDOW_AUTOSIZE);
-    Mat frame;
+
+	Mat frame;
+    Mat img_out, img_matches;
+	Mat kalman_graph = Mat::zeros(frames_list.size(), frames_list[0].cols, frames_list[0].type());
+
+	double start;
     double temp_start = getTime();
     int num_frames = 0;
-    Mat img_out, img_matches;
     int x = 0, y = 0;
-    // Hunt for object in each video frame
+    
+	// Hunt for object in each video frame
     for (int f = 0; f < frames_list.size(); f++) {//while(capture.read(frame)) {
         frame = frames_list[f];
         num_frames++;
@@ -276,11 +291,7 @@ int main(int argc, char **argv) {
                 // (planar) object to the frame (i.e. coordinate system mapping)
                 Mat H = findHomography(object_points, frame_points, CV_RANSAC);
                 // Get corners of the query object (object to be detected)
-                vector<Point2f> object_corners(4);
-                object_corners[0] = cvPoint(0, 0);
-                object_corners[1] = cvPoint(target_object.cols, 0);
-                object_corners[2] = cvPoint(target_object.cols, target_object.rows);
-                object_corners[3] = cvPoint(0, target_object.rows);
+                vector<Point2f> object_corners = makeCornerVec(target_object);
                 vector<Point2f> frame_corners(4);
                 perspectiveTransform(object_corners, frame_corners, H);
 
@@ -293,16 +304,43 @@ int main(int argc, char **argv) {
 					// Draw un-corrected point (in pink, yay pink!)
 					circle(img_matches, frame_corners[i] + Point2f(xOffset, 0), 5, Scalar(255, 0, 255), -1);
 				}
+				
+				// Graph un-corrected point
+				circle(kalman_graph, Point2f(f, frame_corners[0].x), 1, Scalar(255, 0, 255), -1);
+				
 				// Correct measurement using estimation
 				Mat estimated = KF.correct(measurement);
-				for (int i = 0; i < 4; ++i) {
-					frame_corners[i].x = estimated.at<float>(2*i);
-					frame_corners[i].y = estimated.at<float>(2*i +1);
+				if (f != 0) {	// Suppress first frames, filter is not well initialised
+					for (int i = 0; i < 4; ++i) {
+						frame_corners[i].x = estimated.at<float>(2*i);
+						frame_corners[i].y = estimated.at<float>(2*i +1);
+					}
 				}
 
+				// Graph corrected point
+				circle(kalman_graph, Point2f(f, frame_corners[0].x), 1, Scalar(0, 255, 0), -1);
+
+				// Extract the target area from the frame and warp to the be rectangular for blending
+				Mat exract_transform;
+				Mat cur_target = extractAndWarp(frame, frame_corners, exract_transform);
+				// Do blend
+				blender.getBlended(overlay, cur_target, blendedOverlay);
+				imshow("Pre-blended", blendedOverlay);
+
+				// Make mask of extracted area so it is properly replaced
+				Mat unwarpMask = Mat::zeros(frame.size(), CV_8U);
+				Point f_pts[4];
+				for (int i = 0; i < 4; ++i)
+					f_pts[i] = frame_corners[i];
+				fillConvexPoly(unwarpMask, f_pts, 4, 255, 8, 0);
+				
+				// Un-warp and replace
+				Mat unwarpTarget = unWarp(blendedOverlay, frame_corners, frame.size(), exract_transform);
+				unwarpTarget.copyTo(frame, unwarpMask);
+
+
                 // Overlay image (in separate frame display, outside of img_matches)
-                warpPerspective(blendedOverlay, frame, H, frame.size(),
-                                INTER_LINEAR, BORDER_TRANSPARENT);
+                //warpPerspective(blendedOverlay, frame, H, frame.size(), INTER_LINEAR, BORDER_TRANSPARENT);
                 
                 // Draw the actual lines around the detected object
                 line(img_matches, frame_corners[0] + Point2f(xOffset, 0),
@@ -325,6 +363,7 @@ int main(int argc, char **argv) {
         imshow("Object Matching", img_out);
         // TEMP: show frame with overlay
         imshow("Overlay", frame);
+		imshow("Kalman Graph", kalman_graph);
         if(waitKey(1) >= 0) break;
     }
     
@@ -343,6 +382,70 @@ void readFrames(VideoCapture& vc, vector<Mat>& frames_list) {
     while(vc.read(frame)) {
         frames_list.push_back(frame.clone());
     }   
+}
+
+vector<Point2f> makeCornerVec(Mat& src) {
+	vector<Point2f> vec(4);
+	vec[0] = cvPoint(0, 0);
+	vec[1] = cvPoint(src.cols, 0);
+	vec[2] = cvPoint(src.cols, src.rows);
+	vec[3] = cvPoint(0, src.rows);
+	return vec;
+}
+
+vector<Point2f> rectToVec(Rect_<float>& r) {
+	vector<Point2f> vec(4);
+	vec[0] = cvPoint(r.x, r.y);
+	vec[1] = cvPoint(r.x+r.width, r.y);
+	vec[2] = cvPoint(r.x+r.width, r.y+r.height);
+	vec[3] = cvPoint(0, r.y+r.height);
+	return vec;
+}
+
+Mat extractAndWarp(Mat& image, vector<Point2f>& corners, Mat& transform) {
+    transform = Mat::zeros(3, 3, CV_32F);
+	Rect_<float> bound = makeBoundingBox(corners);
+	bound = bound - Point2f(bound.x, bound.y); // x = y = 0, we dont want any offset
+	vector<Point2f> outSize = rectToVec(bound);
+    transform = getPerspectiveTransform(corners, outSize);
+    Mat out = Mat::zeros(bound.height, bound.width, image.type());
+    warpPerspective(image, out, transform, out.size());
+    return out;
+}
+
+Mat unWarp(Mat& image, vector<Point2f>& corners, Size& outSize, Mat& transform) {
+    transform = Mat::zeros(3, 3, CV_32F);
+	
+	vector<Point2f> imgPts = rectToVec(Rect_<float>(0, 0, image.cols, image.rows));
+	
+	//Rect_<float> bound = makeBoundingBox(corners);
+	//vector<Point2f> targetPts(corners);
+	//for (int i = 0; i < 4; ++i) {
+	//	targetPts[i].x -= bound.x;
+	//	targetPts[i].y -= bound.y;
+	//}
+    transform = getPerspectiveTransform(imgPts, corners);
+    Mat out = Mat::zeros(outSize, image.type());
+    warpPerspective(image, out, transform, out.size());
+    return out;
+}
+
+Rect makeBoundingBox(vector<Point2f>& pts) {
+	Rect_<float> r;
+	r.x = pts[0].x;
+	r.y = pts[0].y;
+	float maxX= pts[0].x;
+	float maxY= pts[0].y;
+	for (int i = 1; i < 4; ++i) {
+		r.x = std::min(r.x, pts[i].x);
+		r.y = std::min(r.y, pts[i].y);
+		maxX= std::max(maxX, pts[i].x);
+		maxY= std::max(maxY, pts[i].y);
+	}
+	r.width = maxX - r.x;
+	float height = maxY - r.y;
+	r.height = height;
+	return r;
 }
 
 // MAC/LINUX

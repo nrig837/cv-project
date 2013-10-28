@@ -27,12 +27,11 @@ Blender::Blender() {
     // rather than just using Blender::getBlended()
 }
 
-void Blender::getBlended(const Mat& overlay, const Mat& target, Mat& blendedImage) {
-    // TODO: check input image dimensions are valid (i.e. target >> overlay)
-	if (target.rows < overlay.rows || target.cols < overlay.cols) {
-		cout << "ERROR: Overlay larger than target" << endl;
-		return;
-	}
+void Blender::getBlended(const Mat& orig_overlay, const Mat& target, Mat& blendedImage) {
+	// TEMP: resize overlay to 3/4 size of target so it will always fit
+	Mat overlay;
+	resize(orig_overlay, overlay, Size(3*target.cols/4, 3*target.rows/4));
+
     // TEMP: initial value range
     // Programmatically specify mask image
     Mat_<float> mask(target.rows, target.cols, 1.0);
