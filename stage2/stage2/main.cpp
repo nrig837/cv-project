@@ -12,6 +12,8 @@
 using namespace cv;
 using namespace std;
 
+const bool SHOW_KALMAN_GRAPH = true;
+
 typedef unsigned int uint;
 
 const Scalar colour[] = {Scalar(0, 255, 0), Scalar(255, 0, 0), Scalar(0, 0, 255)};
@@ -19,6 +21,7 @@ const Scalar colour[] = {Scalar(0, 255, 0), Scalar(255, 0, 0), Scalar(0, 0, 255)
 // Read frames from video into matrix vector (for unified interface
 // if we want to be able to slurp up an image sequence as well as a video file)
 void readFrames(VideoCapture& vc, vector<Mat>& frames_list);
+void writeFrames(vector<Mat>& frames_list, double fps);
 
 // Make a bounding Rect from an irregular set of 4 points
 Rect makeBoundingBox(vector<Point2f>&);
@@ -27,8 +30,8 @@ Rect makeBoundingBox(vector<Point2f>&);
 vector<Point2f> makeCornerVec(Mat& src);
 
 // returns the region defined by corners, warped to be rectangular, transform returns the transform used in the warp
-Mat extractAndWarp(Mat& image, vector<Point2f>& corners, Mat& tansform);
-Mat unWarp(Mat& image, vector<Point2f>& corners, Size& out, Mat& tansform);
+Mat extractAndWarp(Mat& image, vector<Point2f>& corners);
+void unWarp(Mat& image, vector<Point2f>& corners, Mat& target);
 
 // Get system time in ms
 double getTime();
@@ -47,7 +50,7 @@ int main(int argc, char **argv) {
     
     // Read in parameters for SURF and playback (if specified)
     // Note: this is totally dodgy but its like 2.00 am
-    int hessianThresh = 500;//200;//1000; // Larger = faster, worse matching. Smaller = slower, better matching
+    int hessianThresh = 100;//200;//1000; // Larger = faster, worse matching. Smaller = slower, better matching
     
     // Read in overlay image
     Mat overlay = imread(argv[2], CV_LOAD_IMAGE_COLOR);
@@ -78,9 +81,11 @@ int main(int argc, char **argv) {
         cout << "Unable to open video file." << endl;
         return -1;
     }
+	double fps = capture.get(CV_CAP_PROP_FPS);
     cout << "Trying to read video frames..." << endl;
     readFrames(capture, frames_list);
     cout << "Read frames." << endl;
+	capture.release();
     
     // Setup SURF detector and precompute keypoints for objects
     vector<Point2f> dummy;
@@ -140,19 +145,24 @@ int main(int argc, char **argv) {
 	KF.statePre.setTo(Scalar(0));
 
 	setIdentity(KF.measurementMatrix);
-	setIdentity(KF.processNoiseCov, Scalar::all(1e-3));
+	setIdentity(KF.processNoiseCov, Scalar::all(1e-5));
 	setIdentity(KF.measurementNoiseCov, Scalar::all(1e-1));
-	setIdentity(KF.errorCovPost, Scalar::all(.1));
+	setIdentity(KF.errorCovPost, Scalar::all(1e-1));
+
+	bool firstMeasure = true;
 	// End Kalman Setup
     
     // Misc setup
-    namedWindow("Kalman Graph", CV_WINDOW_AUTOSIZE);
+	if (SHOW_KALMAN_GRAPH)
+	    namedWindow("Kalman Graph", CV_WINDOW_AUTOSIZE);
+
     namedWindow("Object Matching", CV_WINDOW_AUTOSIZE);
     namedWindow("Overlay", CV_WINDOW_AUTOSIZE);
 
 	Mat frame;
     Mat img_out, img_matches;
-	Mat kalman_graph = Mat::zeros(frames_list.size(), frames_list[0].cols, frames_list[0].type());
+	Mat unwarpMask = Mat::zeros(frames_list[0].size(), CV_8U);
+	Mat kalman_graph = Mat::zeros(frames_list[0].rows, frames_list.size(), CV_8UC3);
 
 	double start;
     double temp_start = getTime();
@@ -255,7 +265,7 @@ int main(int argc, char **argv) {
             vector<DMatch> gm_tmp;
             for(uint k = 0; k < match.size(); k++) {
                 // matches[k].size() == 2 is rather strict. 0.7 is a good compromise between bad matches and no matches
-                if(match[k].size() == 2 && match[k][0].distance < 0.7*(match[k][1].distance))
+                if(match[k].size() == 2 && match[k][0].distance < 0.6*(match[k][1].distance))
                     gm_tmp.push_back(match[k][0]);
             }
             good_match_list.push_back(gm_tmp);
@@ -272,8 +282,15 @@ int main(int argc, char **argv) {
             vector<KeyPoint>& object_keypoints = object_keypoints_list[obj];
             Mat& target_object = target_list[obj];
             
-            if (good_matches.size() < 8) {
-                //cout << obj << ": " << good_matches.size() << " good matches, skipping image" << endl;
+            if (good_matches.size() < 10) {
+				// Update kalman filter with no new measurement
+
+				KF.measurementMatrix.setTo(0);
+				KF.predict();
+				Mat estimated = KF.correct(measurement);
+				// Graph esiamted point
+				circle(kalman_graph, Point2f(f, estimated.at<float>(2*2 +1)), 1, Scalar(0, 255, 0), -1);
+
             } else {
                 //cout << obj << ": " << good_matches.size() << " good matches" << endl;
 				
@@ -295,9 +312,8 @@ int main(int argc, char **argv) {
                 vector<Point2f> frame_corners(4);
                 perspectiveTransform(object_corners, frame_corners, H);
 
-				// Kalman Smoothing Step
-				// First call predict, to update the internal statePre variable
-				KF.predict();
+				//// Kalman Smoothing Step ////
+				// Need a flat array
 				for (int i = 0; i < 4; ++i) {
 					measurement(2*i)    = frame_corners[i].x;
 					measurement(2*i +1) = frame_corners[i].y;
@@ -305,39 +321,48 @@ int main(int argc, char **argv) {
 					circle(img_matches, frame_corners[i] + Point2f(xOffset, 0), 5, Scalar(255, 0, 255), -1);
 				}
 				
+				// Need to init the position if this is the first time the object is found
+				if (firstMeasure) {
+					for (int i = 0; i < 8; ++i)
+						KF.statePost.at<float>(i) = measurement(i);
+					firstMeasure = false;
+				}
+				setIdentity(KF.measurementMatrix);
+
+				// First call predict, to update the internal statePre variable
+				KF.predict();
+				
 				// Graph un-corrected point
-				circle(kalman_graph, Point2f(f, frame_corners[0].x), 1, Scalar(255, 0, 255), -1);
+				circle(kalman_graph, Point2f(f, frame_corners[2].y), 1, Scalar(255, 0, 255), -1);
 				
 				// Correct measurement using estimation
 				Mat estimated = KF.correct(measurement);
-				if (f != 0) {	// Suppress first frames, filter is not well initialised
-					for (int i = 0; i < 4; ++i) {
-						frame_corners[i].x = estimated.at<float>(2*i);
-						frame_corners[i].y = estimated.at<float>(2*i +1);
-					}
+				for (int i = 0; i < 4; ++i) {
+					frame_corners[i].x = estimated.at<float>(2*i);
+					frame_corners[i].y = estimated.at<float>(2*i +1);
 				}
 
 				// Graph corrected point
-				circle(kalman_graph, Point2f(f, frame_corners[0].x), 1, Scalar(0, 255, 0), -1);
+				circle(kalman_graph, Point2f(f, frame_corners[2].y), 1, Scalar(0, 255, 0), -1);
 
 				// Extract the target area from the frame and warp to the be rectangular for blending
 				Mat exract_transform;
-				Mat cur_target = extractAndWarp(frame, frame_corners, exract_transform);
+				Mat cur_target = extractAndWarp(frame, frame_corners);
 				// Do blend
 				blender.getBlended(overlay, cur_target, blendedOverlay);
 				imshow("Pre-blended", blendedOverlay);
 
 				// Make mask of extracted area so it is properly replaced
-				Mat unwarpMask = Mat::zeros(frame.size(), CV_8U);
+				unwarpMask.setTo(0);
 				Point f_pts[4];
 				for (int i = 0; i < 4; ++i)
 					f_pts[i] = frame_corners[i];
 				fillConvexPoly(unwarpMask, f_pts, 4, 255, 8, 0);
 				
 				// Un-warp and replace
-				Mat unwarpTarget = unWarp(blendedOverlay, frame_corners, frame.size(), exract_transform);
+				Mat unwarpTarget = Mat::zeros(frame.size(), frame.type());
+				unWarp(blendedOverlay, frame_corners, unwarpTarget);
 				unwarpTarget.copyTo(frame, unwarpMask);
-
 
                 // Overlay image (in separate frame display, outside of img_matches)
                 //warpPerspective(blendedOverlay, frame, H, frame.size(), INTER_LINEAR, BORDER_TRANSPARENT);
@@ -363,15 +388,20 @@ int main(int argc, char **argv) {
         imshow("Object Matching", img_out);
         // TEMP: show frame with overlay
         imshow("Overlay", frame);
-		imshow("Kalman Graph", kalman_graph);
+		if (SHOW_KALMAN_GRAPH)
+			imshow("Kalman Graph", kalman_graph);
         if(waitKey(1) >= 0) break;
     }
-    
+
     // TEMP: for testing, remove later
     double temp_end = getTime() - temp_start;
     cout << "Entire video took: " << temp_end << " ms " << endl;
     cout << "There were: " << num_frames << " frames" << endl;
     cout << "Average fps: " << (double) num_frames / (temp_end / 1000.0) << endl;
+
+	cout << "Writing processed video at " << fps << " fps" << endl;
+	writeFrames(frames_list, fps);
+	cout << "Done writing" << endl;
     
     return 0;
 }
@@ -384,50 +414,45 @@ void readFrames(VideoCapture& vc, vector<Mat>& frames_list) {
     }   
 }
 
+void writeFrames(vector<Mat>& frames_list, double fps) {
+	VideoWriter vOut = VideoWriter("out.avi", CV_FOURCC('P','I','M','1'), fps, frames_list[0].size());
+	for (unsigned f = 0; f < frames_list.size(); ++f) {
+        vOut.write(frames_list[f]);
+    }   
+}
+
 vector<Point2f> makeCornerVec(Mat& src) {
 	vector<Point2f> vec(4);
-	vec[0] = cvPoint(0, 0);
-	vec[1] = cvPoint(src.cols, 0);
-	vec[2] = cvPoint(src.cols, src.rows);
-	vec[3] = cvPoint(0, src.rows);
+	vec[0] = Point2f(0, 0);
+	vec[1] = Point2f(src.cols, 0);
+	vec[2] = Point2f(src.cols, src.rows);
+	vec[3] = Point2f(0, src.rows);
 	return vec;
 }
 
 vector<Point2f> rectToVec(Rect_<float>& r) {
 	vector<Point2f> vec(4);
-	vec[0] = cvPoint(r.x, r.y);
-	vec[1] = cvPoint(r.x+r.width, r.y);
-	vec[2] = cvPoint(r.x+r.width, r.y+r.height);
-	vec[3] = cvPoint(0, r.y+r.height);
+	vec[0] = Point2f(r.x, r.y);
+	vec[1] = Point2f(r.x+r.width, r.y);
+	vec[2] = Point2f(r.x+r.width, r.y+r.height);
+	vec[3] = Point2f(0, r.y+r.height);
 	return vec;
 }
 
-Mat extractAndWarp(Mat& image, vector<Point2f>& corners, Mat& transform) {
-    transform = Mat::zeros(3, 3, CV_32F);
+Mat extractAndWarp(Mat& image, vector<Point2f>& corners) {
 	Rect_<float> bound = makeBoundingBox(corners);
 	bound = bound - Point2f(bound.x, bound.y); // x = y = 0, we dont want any offset
 	vector<Point2f> outSize = rectToVec(bound);
-    transform = getPerspectiveTransform(corners, outSize);
+    Mat transform = getPerspectiveTransform(corners, outSize);
     Mat out = Mat::zeros(bound.height, bound.width, image.type());
     warpPerspective(image, out, transform, out.size());
     return out;
 }
 
-Mat unWarp(Mat& image, vector<Point2f>& corners, Size& outSize, Mat& transform) {
-    transform = Mat::zeros(3, 3, CV_32F);
-	
-	vector<Point2f> imgPts = rectToVec(Rect_<float>(0, 0, image.cols, image.rows));
-	
-	//Rect_<float> bound = makeBoundingBox(corners);
-	//vector<Point2f> targetPts(corners);
-	//for (int i = 0; i < 4; ++i) {
-	//	targetPts[i].x -= bound.x;
-	//	targetPts[i].y -= bound.y;
-	//}
-    transform = getPerspectiveTransform(imgPts, corners);
-    Mat out = Mat::zeros(outSize, image.type());
-    warpPerspective(image, out, transform, out.size());
-    return out;
+void unWarp(Mat& image, vector<Point2f>& corners, Mat& target) {
+	vector<Point2f> imgPts = rectToVec(Rect_<float>(0, 0, image.cols, image.rows));	
+    Mat transform = getPerspectiveTransform(imgPts, corners);
+    warpPerspective(image, target, transform, target.size());
 }
 
 Rect makeBoundingBox(vector<Point2f>& pts) {
@@ -464,8 +489,8 @@ bool isNumeric(char* str) {
 }
 
 int dist(Point2f p1, Point2f p2) {
-    int x_dist = abs(p1.x - p2.x);
-    int y_dist = abs(p2.y - p2.y);
+    float x_dist = abs(p1.x - p2.x);
+    float y_dist = abs(p2.y - p2.y);
     return (int) sqrt(std::pow((double) x_dist, 2) + std::pow((double) y_dist, 2));
 }
 
